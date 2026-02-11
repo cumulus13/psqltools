@@ -1,27 +1,13 @@
 include README.md
 include __version__.py
-include LICENSE*
-
-# Include package metadata files
+recursive-include psqlc *.py
+recursive-include psqlc *.png
 include psqlc/__init__.py
 include psqlc/__version__.py
 
-# Include pre-compiled binaries in sdist
-recursive-include psqlc *.so
-recursive-include psqlc *.pyd
-recursive-include build *.so
-recursive-include build *.pyd
-
-# Include images
-recursive-include psqlc *.png
-
-# Exclude source files from binary wheels (but keep in sdist)
 global-exclude *.py[cod]
 global-exclude __pycache__
 global-exclude .git*
 global-exclude *.ini
-global-exclude *.c
 
-# For sdist, we want binaries; for bdist_wheel, exclude source
-prune psqlc/psqlc.py
-prune psqlc/psqlc.pyx
+include LICENSE*

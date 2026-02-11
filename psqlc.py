@@ -10,65 +10,87 @@ import asyncio
 from typing import Optional, Dict, Any
 from urllib.parse import urlparse
 
-if len(sys.argv) > 1 and any('--debug' == arg or '-d' == arg for arg in sys.argv):
-    print("🐞 Debug mode enabled")
-    os.environ["DEBUG"] = "1"
-    os.environ['LOGGING'] = "1"
-    os.environ.pop('NO_LOGGING', None)
-    os.environ['TRACEBACK'] = "1"
-    os.environ["LOGGING"] = "1"
+from asyncpg.connect_utils import urllib
+
+PSQLC_LOG_LEVEL = "CRITICAL"
+PSQLC_SHOW_LOG = False
+
+if (len(sys.argv) > 1 and any(arg in ['--debug','-d'] for arg in sys.argv[1:])) or str(os.getenv('PSQLC_DEBUG', False)).lower() in ['1', 'true', 'ok', 'yes', 'on']:
+    print("🐞 Debug mode enabled [PSQLC]")
+    # os.environ["DEBUG"] = "1"
+    # os.environ['LOGGING'] = "1"
+    # os.environ.pop('NO_LOGGING', None)
+    # os.environ['TRACEBACK'] = "1"
+    PSQLC_SHOW_LOG = True
+    PSQLC_LOG_LEVEL="DEBUG"
 else:
     os.environ['NO_LOGGING'] = "1"
 
 tprint = None
 
-def get_logger(name: str = 'psqlc', level: int = None, prefer_rich: bool = True, force_plain: bool = False):
-    """Return a configured logger instance.
-    - prefer_rich: try richcolorlog.setup_logging if available
-    - force_plain: force stdlib logging (or use FORCE_PLAIN_LOG env)
-    - level: optional logging level (int). If None, uses DEBUG when DEBUG env is truthy.
-    """
+# def get_logger(name: str = 'psqlc', level: int = None, prefer_rich: bool = True, force_plain: bool = False):
+#     """Return a configured logger instance.
+#     - prefer_rich: try richcolorlog.setup_logging if available
+#     - force_plain: force stdlib logging (or use FORCE_PLAIN_LOG env)
+#     - level: optional logging level (int). If None, uses DEBUG when DEBUG env is truthy.
+#     """
+#     import logging
+#     global tprint
+
+#     # resolve level
+#     level = level or LOG_LEVEL
+
+#     # allow env override to force plain logging
+#     if force_plain or str(os.getenv("FORCE_PLAIN_LOG", "")).lower() in ("1", "true", "yes"):
+#         logging.basicConfig(level=level)
+#         return logging.getLogger(name)
+
+#     # try richcolorlog if requested
+#     if prefer_rich:
+#         try:
+#             from richcolorlog import setup_logging as _setup, print_exception as tprint
+#             # setup_logging implementations vary; try to call flexibly
+#             if name and name == '__main__': name = 'psqlc'
+#             try:
+#                 logger_obj = _setup(name=name, level=level)
+#             except TypeError:
+#                 try:
+#                     logger_obj = _setup()
+#                 except Exception as e:
+#                     import logging as _logging
+#                     _logging.basicConfig(level=level)
+#                     logger_obj = _logging.getLogger(name)
+#             return logger_obj
+#         except Exception as e:
+#             # fallback to stdlib logging
+#             import logging as _logging
+#             _logging.basicConfig(level=level)
+#             return _logging.getLogger(name)
+
+#     # final fallback: stdlib logging
+#     import logging as _logging
+#     _logging.basicConfig(level=level)
+#     return _logging.getLogger(name)
+
+# # create module-level logger (can be re-created later by calling get_logger)
+# logger = get_logger(__name__)
+
+try:
+    from richcolorlog import setup_logging, print_exception as tprint
+    logger = setup_logging(
+        'psqlc',
+        level=PSQLC_LOG_LEVEL,
+        show=PSQLC_SHOW_LOG,
+        log_file=True,
+        log_file_name="psqlc.log"
+    )
+    # print(f"os.getenv('LOGGING')   [PSQLC]: {os.getenv('LOGGING')}")
+    # print(f"os.getenv('NO_LOGGING')[PSQLC]: {os.getenv('NO_LOGGING')}")
+except:
     import logging
-    global tprint
-
-    # resolve level
-    if level is None:
-        level = logging.DEBUG if str(os.getenv("DEBUG", "")).lower() in ("1", "true", "yes") else logging.INFO
-
-    # allow env override to force plain logging
-    if force_plain or str(os.getenv("FORCE_PLAIN_LOG", "")).lower() in ("1", "true", "yes"):
-        logging.basicConfig(level=level)
-        return logging.getLogger(name)
-
-    # try richcolorlog if requested
-    if prefer_rich:
-        try:
-            from richcolorlog import setup_logging as _setup, print_exception as tprint
-            # setup_logging implementations vary; try to call flexibly
-            if name and name == '__main__': name = 'psqlc'
-            try:
-                logger_obj = _setup(name=name, level=level)
-            except TypeError:
-                try:
-                    logger_obj = _setup()
-                except Exception as e:
-                    import logging as _logging
-                    _logging.basicConfig(level=level)
-                    logger_obj = _logging.getLogger(name)
-            return logger_obj
-        except Exception as e:
-            # fallback to stdlib logging
-            import logging as _logging
-            _logging.basicConfig(level=level)
-            return _logging.getLogger(name)
-
-    # final fallback: stdlib logging
-    import logging as _logging
-    _logging.basicConfig(level=level)
-    return _logging.getLogger(name)
-
-# create module-level logger (can be re-created later by calling get_logger)
-logger = get_logger(__name__)
+    from custom_logging import get_logger
+    level = getattr(logging, LOG_LEVEL, logging.DEBUG)
+    logger = get_logger('psql', level)
 
 HOST = "127.0.0.1"
 DEFAULT_PORT = 5432
@@ -228,6 +250,8 @@ def parse_postgresql_url(connection_string):
 def parse_django_settings(settings_path: str = None, max_depth_up: int = 0, max_depth_down: str = 1) -> Optional[Dict[str, Any]]:
     """Parse Django settings.py or config files for database configuration"""
     global _settings_cache
+
+    logger.critical(f"_settings_cache: {_settings_cache}")
     
     if _settings_cache is not None:
         return _settings_cache
@@ -235,21 +259,27 @@ def parse_django_settings(settings_path: str = None, max_depth_up: int = 0, max_
     try:
         if settings_path is None:
             current_settings = os.path.join(os.getcwd(), "settings.py")
+            logger.success(f"current_settings: {current_settings}")
             if os.path.isfile(current_settings):
                 settings_path = current_settings
+                logger.success(f"settings_path: {os.path.abspath(settings_path)}")
             else:
                 settings_path = find_settings_recursive(max_depth_up=max_depth_up, max_depth_down=max_depth_down)
+                logger.success(f"settings_path: {settings_path}")
 
         logger.debug(f"settings_path: {settings_path}")
 
         if settings_path is None:
             current_settings = os.path.join(os.getcwd(), "config.json")
+            logger.primary(f"current_settings: {current_settings}")
             if os.path.isfile(current_settings):
                 settings_path = current_settings
+                logger.primary(f"settings_path: {os.path.abspath(settings_path)}")
             else:
                 settings_path = find_settings_recursive(filename="config.json", max_depth_up=max_depth_up, max_depth_down=max_depth_down)
+                logger.alert(f"settings_path: {settings_path}")
         
-        logger.debug(f"settings_path: {settings_path}")
+        logger.debug(f"settings_path: {os.path.abspath(settings_path)}")
         
         if settings_path: logger.info(f"os.path.isfile(settings_path): {os.path.isfile(settings_path)}")
 
@@ -266,6 +296,7 @@ def parse_django_settings(settings_path: str = None, max_depth_up: int = 0, max_
         
         final_path = settings_path
         logger.emergency(f"final_path: {final_path}")
+        logger.emergency(f"final_path: {open(final_path, 'r').read()}")
         logger.emergency(f"final_path is file: {os.path.isfile(final_path)}")
 
         logger.warning(f"CHECK [1]: {final_path.endswith('settings.py') or 'settings.py' in final_path}")
@@ -316,14 +347,23 @@ def parse_django_settings(settings_path: str = None, max_depth_up: int = 0, max_
                 if check_db_url:
                     config_db = parse_postgresql_url(cfg.get(check_db_url[0]))
                     logger.debug(f"config_db: {config_db}")
-                    if config_db.get('host') and config_db.get('username') and config_db.get('database') and config_db.get('protocol') == 'postgresql':
+                    if config_db.get('host') and config_db.get('username') and config_db.get('database') and config_db.get('protocol') in ('postgresql', 'postgres'):
                         logger.notice("return config_db")
                         return config_db
             except Exception as e:
                 logger.exception(e)
 
-            for key in ['engine', 'ENGINE', 'TYPE', 'type', 'db_type']:
-                if cfg.get(key, '').lower() in ["django.db.backends.postgresql", "postgresql", "psql", "postgres", "postgre"] or cfg.get("POSTGRESQL_PORT") or cfg.get("postgresql_port") or cfg.get("POSTGRES_PORT") or cfg.get("postgres_port") or cfg.get("POSTGRE_PORT") or cfg.get("postgre_port"):
+            for key in ('DATABASE_URL', 'DB_URL', 'database_url', 'db_url', 'engine', 'ENGINE', 'TYPE', 'type', 'db_type'):
+                logger.alert(f"key: {key}")
+                # logger.warning(f"cfg.get(key, '').lower() in ('database_url', 'db_url'): {cfg.get(key, '').lower() in ('database_url', 'db_url')}")
+                # if cfg.get(key, '').lower() in ('database_url', 'db_url'):
+                #     config_db = parse_postgresql_url(cfg.get(key))
+                #     logger.debug(f"config_db: {config_db}")
+                #     if config_db.get('host') and config_db.get('username') and config_db.get('database') and config_db.get('protocol') == 'postgresql':
+                #         logger.notice("return config_db")  # type: ignore
+                #         return config_db
+                    
+                if cfg.get(key, '').lower() in ["django.db.backends.postgresql", "postgresql", "psql", "postgres", "postgre"] or cfg.get("POSTGRESQL_PORT") or cfg.get("postgresql_port") or cfg.get("POSTGRES_PORT") or cfg.get("postgres_port") or cfg.get("POSTGRE_PORT") or cfg.get("postgre_port") or "postgres://" in cfg.get(key, '').lower():
                     rich_print(f"📄 Found config at: {final_path}", color="#00CED1")
                     engine = cfg.get("ENGINE")
                     rich_print(f"📄 Found settings at: {final_path}", color="#00CED1")
@@ -449,8 +489,8 @@ def parse_django_settings(settings_path: str = None, max_depth_up: int = 0, max_
                                 cfg.get("port")
                     }
                     # print(f"_settings_cache: {_settings_cache}")
-                    logger.notice(f"[{final_path}] _settings_cache: {_settings_cache}")
-                    
+                    logger.notice(f"[{final_path}] _settings_cache: {_settings_cache}")  # type: ignore
+                    logger.alert(f"cfg: {cfg.show()}")  # type: ignore
                     logger.debug(f'POSTGRESQL_USERNAME = {cfg.get("POSTGRESQL_USERNAME")}')
                     logger.debug(f'POSTGRESQL_USER = {cfg.get("POSTGRESQL_USER")}')
                     logger.debug(f'POSTGRES_USERNAME = {cfg.get("POSTGRES_USERNAME")}')
